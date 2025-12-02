@@ -97,7 +97,7 @@ export async function calculateApprovedHours(userId, cachedDevlogs) {
 }
 
 /**
- * Calculate total hours for a user (including pending/non-shipped hours)
+ * Calculate total hours for a user from all their projects
  * @param {string} userId - User's record ID
  * @param {Array} [cachedDevlogs] - Optional cached devlogs to avoid extra queries
  * @returns {Promise<{codeHours: number, artHours: number, totalHours: number, projectBreakdown: Object}>}
@@ -108,60 +108,33 @@ export async function calculateTotalHours(userId, cachedDevlogs) {
 	}
 
 	try {
-		const userRecords = await getUserDevlogs(userId, cachedDevlogs);
+		const userRecord = await base('User').find(userId);
+		const userEmail = userRecord.fields.email;
 
+		const projectRecords = await base('Projects')
+			.select({
+				filterByFormula: `FIND("${userEmail}", ARRAYJOIN({user}, ","))`
+			})
+			.all();
 		let totalCodeHours = 0;
 		let totalArtHours = 0;
 		const projectBreakdown = {};
 
-		for (const record of userRecords) {
-			const fields = record.fields;
-
-			const codeHours = typeof fields.codeHours === 'number' ? fields.codeHours : 0;
+		for (const project of projectRecords) {
+			const fields = project.fields;
+			const codeHours = typeof fields.hackatimeHours === 'number' ? fields.hackatimeHours : 0;
 			const artHours = typeof fields.artHours === 'number' ? fields.artHours : 0;
-
-			console.log('Devlog:', {
-				id: record.id,
-				created: fields.Created,
-				codeHours,
-				artHours,
-				projectIds: fields.projectIds,
-				projectIdsType: typeof fields.projectIds
-			});
 
 			totalCodeHours += codeHours;
 			totalArtHours += artHours;
 
-			// Track hours per project (projectIds is comma-separated string)
-			const projectIds = fields.projectIds;
-			if (projectIds && typeof projectIds === 'string') {
-				const projects = projectIds.split(',').filter((id) => id.trim());
-
-				for (const projectId of projects) {
-					const trimmedId = projectId.trim();
-					if (!trimmedId) continue;
-
-					if (!projectBreakdown[trimmedId]) {
-						projectBreakdown[trimmedId] = {
-							codeHours: 0,
-							artHours: 0,
-							totalHours: 0
-						};
-					}
-
-					// For devlogs with multiple projects, distribute hours evenly
-					const projectCount = projects.length;
-					const distributedCodeHours = codeHours / projectCount;
-					const distributedArtHours = artHours / projectCount;
-
-					projectBreakdown[trimmedId].codeHours += distributedCodeHours;
-					projectBreakdown[trimmedId].artHours += distributedArtHours;
-					projectBreakdown[trimmedId].totalHours += distributedCodeHours + distributedArtHours;
-				}
-			} else {
-				console.log('No projectIds or not a string, skipping project breakdown');
-			}
+			projectBreakdown[project.id] = {
+				codeHours: codeHours,
+				artHours: artHours,
+				totalHours: codeHours + artHours
+			};
 		}
+
 		return {
 			codeHours: totalCodeHours,
 			artHours: totalArtHours,
